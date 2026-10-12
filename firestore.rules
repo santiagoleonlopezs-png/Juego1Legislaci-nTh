@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+ match /databases/{database}/documents {
+  function signed() { return request.auth != null; }
+  function host(room) { return signed() && get(/databases/$(database)/documents/reglas_salas/$(room)).data.host == request.auth.uid; }
+  match /reglas_salas/{room} {
+   allow create: if signed() && request.resource.data.host == request.auth.uid;
+   allow read: if signed(); // El código de sala funciona como acceso; no publicar datos sensibles.
+   allow update, delete: if signed() && resource.data.host == request.auth.uid;
+   match /participants/{id} {
+    allow read: if signed();
+    allow create: if signed() && id == request.auth.uid && request.resource.data.uid == request.auth.uid;
+    allow update: if signed() && (id == request.auth.uid || host(room));
+    allow delete: if host(room);
+   }
+   match /pairs/{id} {
+    allow read: if signed();
+    allow create, delete: if host(room);
+    allow update: if signed() && (
+      host(room) ||
+      (resource.data.proposer == request.auth.uid && resource.data.offer == null &&
+       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['offer']) &&
+       request.resource.data.offer is int && request.resource.data.offer >= 0 && request.resource.data.offer <= 100) ||
+      (resource.data.receiver == request.auth.uid && resource.data.offer is int && resource.data.accepted == null &&
+       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['accepted']) && request.resource.data.accepted is bool)
+    );
+   }
+   match /teams/{id} {
+    allow read: if signed();
+    allow create: if signed() && id == request.auth.uid && request.resource.data.owner == request.auth.uid;
+    allow update: if signed() && (host(room) || (id == request.auth.uid &&
+      request.resource.data.owner == resource.data.owner &&
+      request.resource.data.policyScore == resource.data.policyScore &&
+      ((get(/databases/$(database)/documents/reglas_salas/$(room)).data.phase == 'r1' && resource.data.lockedR1 == false &&
+       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['strategies','lockedR1']) &&
+       request.resource.data.lockedR1 == true && request.resource.data.strategies is list && request.resource.data.strategies.size() <= 4) ||
+      (get(/databases/$(database)/documents/reglas_salas/$(room)).data.phase == 'r2' && resource.data.lockedR2 == false &&
+       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['actions','policy','lockedR2']) &&
+       request.resource.data.lockedR2 == true && request.resource.data.actions is list && request.resource.data.actions.size() <= 3 && request.resource.data.policy is list && request.resource.data.policy.size() == 5))));
+    allow delete: if host(room);
+   }
+  }
+ }
+}
